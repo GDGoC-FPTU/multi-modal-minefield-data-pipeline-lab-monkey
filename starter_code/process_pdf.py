@@ -1,6 +1,8 @@
 import google.generativeai as genai
 import os
 import json
+import time
+from google.api_core.exceptions import ResourceExhausted
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -22,20 +24,45 @@ def extract_pdf_data(file_path):
         return None
         
     prompt = """
-Analyze this document and extract a summary and the author. 
+Analyze this document and extract the following structured metadata: Title, Author, Main Topics, and Tables.
 Output exactly as a JSON object matching this exact format:
 {
     "document_id": "pdf-doc-001",
-    "content": "Summary: [Insert your 3-sentence summary here]",
+    "content": "Main Topics: [Insert Main Topics] \\n Tables: [Insert Tables summary]",
     "source_type": "PDF",
     "author": "[Insert author name here]",
     "timestamp": null,
-    "source_metadata": {"original_file": "lecture_notes.pdf"}
+    "source_metadata": {
+        "original_file": "lecture_notes.pdf",
+        "title": "[Insert Title here]"
+    }
 }
 """
     
     print("Generating content from PDF using Gemini...")
-    response = model.generate_content([pdf_file, prompt])
+    max_retries = 5
+    base_delay = 2
+    response = None
+    
+    for attempt in range(max_retries):
+        try:
+            response = model.generate_content([pdf_file, prompt])
+            break
+        except ResourceExhausted as e:
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                print(f"Rate limited (429). Retrying in {delay} seconds...")
+                time.sleep(delay)
+            else:
+                print("Max retries exceeded. Failed to generate content.")
+                return None
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            return None
+            
+    if not response:
+        return None
+        
     content_text = response.text
     
     # Simple cleanup if the response is wrapped in markdown json block
@@ -46,5 +73,9 @@ Output exactly as a JSON object matching this exact format:
     if content_text.startswith("```"):
         content_text = content_text[3:]
         
-    extracted_data = json.loads(content_text.strip())
-    return extracted_data
+    try:
+        extracted_data = json.loads(content_text.strip())
+        return extracted_data
+    except json.JSONDecodeError:
+        print("Failed to decode JSON from Gemini response.")
+        return None
