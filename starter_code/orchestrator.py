@@ -35,14 +35,35 @@ def main():
     output_path = os.path.join(os.path.dirname(SCRIPT_DIR), "processed_knowledge_base.json")
     # ----------------------------------------------
 
-    # TODO: Call each processing function (extract_pdf_data, clean_transcript, etc.)
-    # TODO: Run quality gates (run_quality_gate) before adding to final_kb
-    # TODO: Save final_kb to output_path using json.dump
+    # Gather all raw documents
+    docs_to_process = []
     
-    # Example:
-    # doc = extract_pdf_data(pdf_path)
-    # if doc and run_quality_gate(doc):
-    #     final_kb.append(doc)
+    pdf_doc = extract_pdf_data(pdf_path)
+    if pdf_doc: docs_to_process.append(pdf_doc)
+        
+    trans_doc = clean_transcript(trans_path)
+    if trans_doc: docs_to_process.append(trans_doc)
+        
+    docs_to_process.extend(parse_html_catalog(html_path))
+    docs_to_process.extend(process_sales_csv(csv_path))
+    
+    code_doc = extract_logic_from_code(code_path)
+    if code_doc: docs_to_process.append(code_doc)
+        
+    # Process through QA gates and Schema validation
+    for raw_doc in docs_to_process:
+        if run_quality_gate(raw_doc):
+            try:
+                # Validate against the Unified Schema
+                unified_doc = UnifiedDocument(**raw_doc)
+                # Append a JSON-safe dictionary (handles datetime automatically)
+                final_kb.append(unified_doc.model_dump(mode='json'))
+            except Exception as e:
+                print(f"Validation Error for {raw_doc.get('document_id', 'unknown')}: {e}")
+                
+    # Save the final Knowledge Base
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(final_kb, f, ensure_ascii=False, indent=2)
 
     end_time = time.time()
     print(f"Pipeline finished in {end_time - start_time:.2f} seconds.")
