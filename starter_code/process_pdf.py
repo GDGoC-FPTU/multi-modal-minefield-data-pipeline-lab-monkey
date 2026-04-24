@@ -1,24 +1,27 @@
-import google.generativeai as genai
+from google import genai
+from google.genai.errors import APIError
 import os
 import json
 import time
-from google.api_core.exceptions import ResourceExhausted
 from dotenv import load_dotenv
 
 load_dotenv()
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 def extract_pdf_data(file_path):
     if not os.path.exists(file_path):
         print(f"Error: File not found at {file_path}")
         return None
         
-    # Thay đổi model name để tránh lỗi 404 trên các phiên bản API cũ
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    # Initialize the new genai Client. It automatically picks up GEMINI_API_KEY from env.
+    try:
+        client = genai.Client()
+    except Exception as e:
+        print(f"Failed to initialize Gemini Client: {e}")
+        return None
     
     print(f"Uploading {file_path} to Gemini...")
     try:
-        pdf_file = genai.upload_file(path=file_path)
+        pdf_file = client.files.upload(file=file_path)
     except Exception as e:
         print(f"Failed to upload file to Gemini: {e}")
         return None
@@ -46,15 +49,22 @@ Output exactly as a JSON object matching this exact format:
     
     for attempt in range(max_retries):
         try:
-            response = model.generate_content([pdf_file, prompt])
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=[pdf_file, prompt]
+            )
             break
-        except ResourceExhausted as e:
-            if attempt < max_retries - 1:
-                delay = base_delay * (2 ** attempt)
-                print(f"Rate limited (429). Retrying in {delay} seconds...")
-                time.sleep(delay)
+        except APIError as e:
+            if getattr(e, 'code', None) == 429: # ResourceExhausted
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    print(f"Rate limited (429). Retrying in {delay} seconds...")
+                    time.sleep(delay)
+                else:
+                    print("Max retries exceeded. Failed to generate content.")
+                    return None
             else:
-                print("Max retries exceeded. Failed to generate content.")
+                print(f"API Error occurred: {e}")
                 return None
         except Exception as e:
             print(f"An error occurred: {e}")
